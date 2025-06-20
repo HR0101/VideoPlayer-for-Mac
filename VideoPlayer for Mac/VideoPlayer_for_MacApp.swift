@@ -13,5 +13,7 @@ struct VideoPlayer_for_MacApp: App {
         WindowGroup {
             ContentView()
         }
+        // ウィンドウの最小サイズを設定します.
+        .windowResizability(.contentMinSize)
     }
 }
