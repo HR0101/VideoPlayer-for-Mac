@@ -22,10 +22,8 @@ struct VideoItem: Identifiable, Hashable, Codable {
         do {
             var isStale = false
             let resolvedUrl = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
-            // TODO: isStaleがtrueの場合、新しいブックマークで更新するのが望ましい.
             return resolvedUrl
         } catch {
-            // ブックマークの解決に失敗した場合、ダミーのURLを返す.
             print("Failed to resolve bookmark for video \(id): \(error)")
             return URL(fileURLWithPath: "/")
         }
@@ -41,7 +39,7 @@ struct VideoItem: Identifiable, Hashable, Codable {
     // Codableが利用するキーを定義します.
     enum CodingKeys: String, CodingKey {
         case id
-        case bookmarkData // urlの代わりにbookmarkDataを保存.
+        case bookmarkData
         case isFavorite
         case isInTrash
         case albumIDs
@@ -50,7 +48,6 @@ struct VideoItem: Identifiable, Hashable, Codable {
     // 新しく動画をインポートする際に使用するイニシャライザ.
     init(url: URL) throws {
         self.id = UUID()
-        // URLからブックマークデータを作成し、保存する.
         self.bookmarkData = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
         self.isFavorite = false
         self.isInTrash = false
@@ -67,13 +64,13 @@ struct VideoItem: Identifiable, Hashable, Codable {
 }
 
 
-// Albumモデルは変更ありません.
+// Albumモデル.
 struct Album: Identifiable, Hashable, Codable {
     let id: UUID
     var name: String
 }
 
-// --- サイドバー関連のモデル（変更なし） ---
+// --- サイドバー関連のモデル ---
 enum SidebarItem: Hashable, Identifiable {
     case category(Category)
     case album(Album)
