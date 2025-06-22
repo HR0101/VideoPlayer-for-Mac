@@ -6,8 +6,11 @@ struct ContentView: View {
     @State private var videoToPlay: VideoItem?
     @State private var isShowingPlayer = false
     
-    // ゴミ箱を空にする確認アラート用のState
+    @State private var selectedVideoID: UUID? = nil
+    
     @State private var isShowingEmptyTrashAlert = false
+    
+    @State private var showTitles = true
 
     @State private var gridColumns: [GridItem] = [
         GridItem(.adaptive(minimum: 150))
@@ -15,7 +18,12 @@ struct ContentView: View {
     @State private var columnCount: Double = 3.0
     
     var body: some View {
-        ZStack {
+        if isShowingPlayer, let video = videoToPlay {
+            VideoPlayerView(
+                viewModel: VideoPlayerViewModel(videos: viewModel.videos, currentVideo: video),
+                isShowing: $isShowingPlayer
+            )
+        } else {
             NavigationSplitView {
                 SidebarView(viewModel: viewModel, selection: $viewModel.selectedItem)
                     .navigationSplitViewColumnWidth(min: 180, ideal: 200)
@@ -27,22 +35,41 @@ struct ContentView: View {
                             videos: viewModel.videos,
                             gridColumns: $gridColumns,
                             columnCount: Int(columnCount),
+                            selectedVideoID: $selectedVideoID,
+                            showTitles: showTitles,
                             videoToPlay: $videoToPlay,
                             isShowingPlayer: $isShowingPlayer
                         )
                         
                         // カスタム操作パネル
                         HStack {
-                            Button(action: {
-                                viewModel.importVideos()
-                            }) {
-                                Label("Import Videos", systemImage: "plus")
+                            Button(action: { viewModel.importVideos() }) {
+                                Label("Import", systemImage: "plus")
                             }
                             .help("Finderから動画をインポートします.")
                             
+                            if viewModel.selectedItem != .category(.trash) {
+                                Button(role: .destructive, action: {
+                                    if let id = selectedVideoID {
+                                        viewModel.moveVideosToTrash(videoIDs: [id])
+                                        selectedVideoID = nil
+                                    }
+                                }) {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                .help("選択した項目をゴミ箱に入れます.")
+                                .disabled(selectedVideoID == nil)
+                            }
+                            
+                            Button(action: {
+                                showTitles.toggle()
+                            }) {
+                                Label("Titles", systemImage: showTitles ? "tag.fill" : "tag")
+                            }
+                            .help(showTitles ? "タイトルを非表示" : "タイトルを表示")
+                            
                             Spacer()
                             
-                            // 「ゴミ箱」選択時のみ表示するボタン
                             if viewModel.selectedItem == .category(.trash) && !viewModel.videos.isEmpty {
                                 Button("ゴミ箱を空にする", role: .destructive) {
                                     isShowingEmptyTrashAlert = true
@@ -57,27 +84,23 @@ struct ContentView: View {
                     .navigationTitle(viewModel.selectedItem?.name ?? "VideoPlayer for Mac")
                 }
             }
-            
-            if isShowingPlayer, let video = videoToPlay {
-                VideoPlayerView(
-                    viewModel: VideoPlayerViewModel(videos: viewModel.videos, currentVideo: video),
-                    isShowing: $isShowingPlayer
+            .alert("ゴミ箱を空にしますか？", isPresented: $isShowingEmptyTrashAlert) {
+                Button("空にする", role: .destructive) { viewModel.emptyTrash() }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("この操作は取り消せません.")
+            }
+            .alert(item: $viewModel.importError) { error in
+                Alert(
+                    title: Text("インポートエラー"),
+                    message: Text(error.message),
+                    dismissButton: .default(Text("OK"))
                 )
-                .zIndex(1)
             }
-        }
-        .alert("ゴミ箱を空にしますか？", isPresented: $isShowingEmptyTrashAlert) {
-            Button("空にする", role: .destructive) {
-                viewModel.emptyTrash()
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("この操作は取り消せません。")
         }
     }
 }
 
-// GridSizeSliderは変更ありませんが、ファイルの完全性のために記載します。
 struct GridSizeSlider: View {
     @Binding var gridColumns: [GridItem]
     @Binding var sliderValue: Double
