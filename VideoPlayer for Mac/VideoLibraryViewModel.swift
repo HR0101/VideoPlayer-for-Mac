@@ -7,7 +7,6 @@
 
 import SwiftUI
 import AVKit
-import UniformTypeIdentifiers
 
 @MainActor
 class VideoLibraryViewModel: ObservableObject {
@@ -19,15 +18,20 @@ class VideoLibraryViewModel: ObservableObject {
     }
     @Published var selectedItem: SidebarItem? = .category(.allVideos)
     
+    @Published var importError: IdentifiableError?
+    
     private let dataURL: URL
 
     // MARK: - Initialization & Persistence
+    
     init() {
         let fileManager = FileManager.default
         guard let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             fatalError("Application Support directory could not be found.")
         }
+        
         let appDirectoryURL = appSupportURL.appendingPathComponent("VideoPlayer for Mac")
+        
         if !fileManager.fileExists(atPath: appDirectoryURL.path) {
             do {
                 try fileManager.createDirectory(at: appDirectoryURL, withIntermediateDirectories: true, attributes: nil)
@@ -35,7 +39,9 @@ class VideoLibraryViewModel: ObservableObject {
                 fatalError("Could not create app support directory: \(error)")
             }
         }
+        
         self.dataURL = appDirectoryURL.appendingPathComponent("library.json")
+        
         loadData()
     }
     
@@ -43,6 +49,7 @@ class VideoLibraryViewModel: ObservableObject {
         let appData = AppData(videos: allVideos, albums: albums)
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
+
         do {
             let data = try encoder.encode(appData)
             try data.write(to: dataURL, options: [.atomicWrite])
@@ -52,8 +59,12 @@ class VideoLibraryViewModel: ObservableObject {
     }
     
     func loadData() {
-        guard let data = try? Data(contentsOf: dataURL) else { return }
+        guard let data = try? Data(contentsOf: dataURL) else {
+            return
+        }
+        
         let decoder = JSONDecoder()
+        
         do {
             let appData = try decoder.decode(AppData.self, from: data)
             self.allVideos = appData.videos
@@ -64,6 +75,7 @@ class VideoLibraryViewModel: ObservableObject {
     }
     
     // MARK: - Computed Properties
+    
     var videos: [VideoItem] {
         guard let selectedItem = selectedItem else { return [] }
         switch selectedItem {
@@ -79,23 +91,32 @@ class VideoLibraryViewModel: ObservableObject {
     }
     
     // MARK: - Intentions
+    
     func importVideos() {
         let openPanel = NSOpenPanel()
         openPanel.canChooseFiles = true
         openPanel.canChooseDirectories = false
         openPanel.allowsMultipleSelection = true
-        openPanel.allowedContentTypes = [UTType.movie, UTType.video, UTType.quickTimeMovie]
+        
+        openPanel.allowedFileTypes = ["mov", "mp4", "m4v", "avi"]
 
         if openPanel.runModal() == .OK {
+            var targetAlbumID: UUID?
+            if case .album(let selectedAlbum) = self.selectedItem {
+                targetAlbumID = selectedAlbum.id
+            }
+            
             for url in openPanel.urls {
                 if !allVideos.contains(where: { $0.url == url }) {
                     do {
-                        // 新しいイニシャライザを使い、ブックマークデータを作成する.
-                        let newItem = try VideoItem(url: url)
+                        var newItem = try VideoItem(url: url)
+                        if let albumID = targetAlbumID {
+                            newItem.albumIDs.insert(albumID)
+                        }
                         allVideos.append(newItem)
                     } catch {
-                        print("Failed to create bookmark for \(url.path): \(error)")
-                        // ここでユーザーにエラーを通知するUIを表示するのが望ましい.
+                        let message = "ファイルのアクセス許可の作成に失敗しました.\n\nXcodeプロジェクトの「Signing & Capabilities」でApp Sandboxが正しく設定されているか確認してください。\n\n\(error.localizedDescription)"
+                        self.importError = IdentifiableError(message: message)
                     }
                 }
             }
@@ -109,25 +130,25 @@ class VideoLibraryViewModel: ObservableObject {
     
     func addVideos(videoIDs: Set<UUID>, to album: Album) {
         for videoID in videoIDs {
-            if let index = allVideos.firstIndex(where: { $0.id == videoID }) {
-                allVideos[index].albumIDs.insert(album.id)
+            updateVideo(withID: videoID) { video in
+                video.albumIDs.insert(album.id)
             }
         }
     }
     
-    // --- 動画削除関連のメソッド ---
     func moveVideosToTrash(videoIDs: Set<UUID>) {
         var videosToPermanentlyDelete: [UUID] = []
         for videoID in videoIDs {
-            if let index = allVideos.firstIndex(where: { $0.id == videoID }) {
-                if allVideos[index].isInTrash {
+            updateVideo(withID: videoID) { video in
+                if video.isInTrash {
                     videosToPermanentlyDelete.append(videoID)
                 } else {
-                    allVideos[index].isInTrash = true
-                    allVideos[index].isFavorite = false
+                    video.isInTrash = true
+                    video.isFavorite = false
                 }
             }
         }
+        
         if !videosToPermanentlyDelete.isEmpty {
             allVideos.removeAll { videosToPermanentlyDelete.contains($0.id) }
         }
@@ -135,8 +156,8 @@ class VideoLibraryViewModel: ObservableObject {
 
     func recoverVideosFromTrash(videoIDs: Set<UUID>) {
         for videoID in videoIDs {
-            if let index = allVideos.firstIndex(where: { $0.id == videoID }) {
-                allVideos[index].isInTrash = false
+            updateVideo(withID: videoID) { video in
+                video.isInTrash = false
             }
         }
     }
@@ -144,4 +165,21 @@ class VideoLibraryViewModel: ObservableObject {
     func emptyTrash() {
         allVideos.removeAll { $0.isInTrash }
     }
+    
+    // MARK: - Private Helpers
+    
+    private func updateVideo(withID id: UUID, action: (inout VideoItem) -> Void) {
+        if let index = allVideos.firstIndex(where: { $0.id == id }) {
+            var videoToUpdate = allVideos[index]
+            action(&videoToUpdate)
+            allVideos[index] = videoToUpdate
+        }
+    }
 }
+
+// アラートで表示するためのエラー構造体
+struct IdentifiableError: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
